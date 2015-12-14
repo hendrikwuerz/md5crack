@@ -1,110 +1,100 @@
-import java.io.UnsupportedEncodingException;
-import java.security.MessageDigest;
+import java.math.BigInteger;
 import java.security.NoSuchAlgorithmException;
-import java.util.concurrent.Callable;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 
 /**
- * Created by Hendrik on 10.12.2015.
+ * Created by Hendrik on 11.12.2015.
  */
-public class Md5Crack implements Callable<CrackResult> {
+public class Md5Crack {
 
-    private MessageDigest md; // object to generate md5 hash
-    private byte[] hash;
-    private String prefix;
-    private int size; // how many chars are taken from the alphabet
-    private byte[] alphabet; // allowed chars
+    String hash;
+    String prefix;
+    int minSize;
+    int maxSize;
+    char[] alphabet;
+    long cracksPerMilliSecond;
+    int threads;
 
-    private byte[] testPlainText; // String to be checked as an answer
+    ExecutorService executor;
 
-
-    public int getSize() {
-        return size;
-    }
-
-    public String getPrefix() {
-        return (new String(testPlainText).substring(0, testPlainText.length - size));
-    }
-
-    public Md5Crack(String hash, String prefix, int size, char[] alphabet) throws NoSuchAlgorithmException {
-        md = MessageDigest.getInstance("MD5");
-
-        this.hash = hexStringToByteArray(hash);
+    public Md5Crack(String hash, String prefix, int minSize, int maxSize, char[] alphabet, long cracksPerMilliSecond, int threads) {
+        this.hash = hash;
         this.prefix = prefix;
-        this.size = size;
-
-        // init alphabet
-        this.alphabet = new byte[alphabet.length];
-        for(int i = 0; i < alphabet.length; i++) {
-            this.alphabet[i] = (byte)alphabet[i];
-        }
-
-        // init plaintext
-        testPlainText = new byte[prefix.length() + size];
-        for(int i = 0; i < prefix.length(); i++) {
-            testPlainText[i] = (byte)prefix.charAt(i);
-        }
-
+        this.minSize = minSize;
+        this.maxSize = maxSize;
+        this.alphabet = alphabet;
+        this.cracksPerMilliSecond = cracksPerMilliSecond;
+        this.threads = threads;
     }
 
-
-
-    @Override
-    public CrackResult call() {
-        return crack();
+    public String timeCalculationtoString() {
+        StringBuilder sb = new StringBuilder();
+        for(int i = minSize; i <= maxSize; i++) {
+            sb.append("Plaintext with ")
+                    .append(i)
+                    .append(" chars will max take ")
+                    .append(Md5Crack.calculateTime(alphabet.length, i, cracksPerMilliSecond) / 1000 / threads)
+                    .append(" seconds.")
+                    .append(System.lineSeparator());
+        }
+        return sb.toString();
     }
 
-    public CrackResult crack() {
-        long start = System.currentTimeMillis();
-        String crack = crack(size);
-        return new CrackResult(crack, prefix, size, alphabet.length, System.currentTimeMillis() - start);
+    public List<Future<CrackResult>> start() throws NoSuchAlgorithmException {
+        executor = Executors.newFixedThreadPool(threads);
+        List<Future<CrackResult>> list = new ArrayList<>();
+
+        // create a thread for each start character
+        for(int usedSize = minSize; usedSize <= maxSize; usedSize++) {
+            for (char anAlphabet : alphabet) {
+                Md5CrackWorker md5CrackWorker = new Md5CrackWorker(hash, prefix + anAlphabet, usedSize - 1, alphabet);
+                Future<CrackResult> future = executor.submit(md5CrackWorker);
+                list.add(future);
+            }
+        }
+
+        return list;
     }
 
     /**
-     * cracks the hash in attribute 'hash' based on brute force
-     * @param size
-     *          current amount of used chars from alphabet at the end of the array testPlainText
-     * @return
-     *          The plaintext if found or null if nothing was found
+     * kill all running threads in the executor
      */
-    private String crack(int size) {
-
-        // as long as there are undefined chars try everyone
-        if(size > 0) {
-            for(byte selectedChar : alphabet) {
-                testPlainText[testPlainText.length - size] = selectedChar; // try a char from the alphabet
-                String result = crack(size - 1);
-                if (result != null) { // found the solution
-                    return result;
-                }
-            }
-        } else { // all places filled
-            // get hashed value
-            md.update(testPlainText);
-            byte[] testHash = md.digest();
-            //System.out.println("I try " + new String(testPlainText) + " with hash " + byteArrayToHexString(testHash));
-            if(isByteArrayEquals(hash, testHash)) { // Solution found
-                return new String(testPlainText);
-            }
-        }
-        return null;
+    public void stop() {
+        executor.shutdownNow();
     }
 
+    /**
+     * how many calculations are necessary in worst case
+     * @param alphabetSize
+     *          amount of chars in the alphabet
+     * @param stringLength
+     *          amount of unknown chars of the plaintext string
+     * @return
+     *          amount of calculations needed for a 100% check.
+     */
+    public static BigInteger getNeededCalculations(int alphabetSize, int stringLength) {
+        return (BigInteger.valueOf(alphabetSize)).pow(stringLength);
+    }
 
     /**
-     * checks the two arrays to be equals.
-     * Expects both arrays to have same size.
-     * @param a
-     *          First array
-     * @param b
-     *          Second array
+     * calculates how many seconds are needed for the passed environment
+     * @param alphabetSize
+     *          amount of chars in the alphabet
+     * @param stringLength
+     *          amount of unknown chars of the plaintext string
+     * @param cracksPerMilliSecond
+     *          how many calculations per milli second are available on the current machine
      * @return
-     *          true if both arrays are equals, false otherwise
+     *          runtime for 100% search in seconds
+     *          normally the correct plaintext will be found before all other options are checked
      */
-    private boolean isByteArrayEquals(byte[] a, byte[] b) {
-        for(int i = 0; i < a.length; i++) {
-            if(a[i] != b[i]) return false;
-        }
-        return true;
+    public static long calculateTime(int alphabetSize, int stringLength, long cracksPerMilliSecond) {
+        BigInteger neededCalculations = getNeededCalculations(alphabetSize, stringLength);
+        return neededCalculations.divide(BigInteger.valueOf(cracksPerMilliSecond)).longValue();
     }
 
     /**
@@ -137,9 +127,5 @@ public class Md5Crack implements Callable<CrackResult> {
                     + Character.digit(s.charAt(i+1), 16));
         }
         return data;
-    }
-
-    public static long calculateTime(int alphabetSize, int stringLength, int cracksPerSecond) {
-        return (long)Math.pow(alphabetSize, stringLength) / cracksPerSecond;
     }
 }

@@ -1,12 +1,14 @@
+import java.math.BigInteger;
+
 /**
  * Created by Hendrik on 10.12.2015.
  */
 public class CrackResult {
-    String result;
-    String prefix;
-    int size;
-    int alphabetSize;
-    long time;
+    String result; // The result (plain text) from the calculation, null if nothing was found
+    String prefix; // The known prefix of the plaintext
+    int size; // number of unknown chars behind the prefix
+    int alphabetSize; // amount of chars is the alphabet
+    long time; // needed time in ms for the calculation
 
     public CrackResult(String result, String prefix, int size, int alphabetSize, long time) {
         this.result = result;
@@ -20,10 +22,12 @@ public class CrackResult {
         return result != null;
     }
 
-    public int getCracksPerSecond() {
+    public int getCracksPerMilliSecond() {
         int cracksPerSecond = -1;
-        if(time > 1000)
-            cracksPerSecond = (int) (((int) Math.pow(alphabetSize, size)) / (time / 1000));
+        if(time > 1000) {
+            BigInteger neededCalculations = Md5Crack.getNeededCalculations(alphabetSize, size);
+            cracksPerSecond = neededCalculations.divide(BigInteger.valueOf(time)).intValue();
+        }
         return cracksPerSecond;
     }
 
@@ -38,6 +42,10 @@ public class CrackResult {
             pattern = prefix + extend;
         }
 
-        return (isCracked() ? "CRACKED" : "Not cracked") + " - " + pattern + " - Cracks per Second: " + getCracksPerSecond();
+        return (isCracked() ? "CRACKED" : "Not cracked") +
+                " - " + pattern +
+                " - Used time: " + time +
+                " - Total Cracks: " + Md5Crack.getNeededCalculations(alphabetSize, size) +
+                " - Cracks per Millisecond: " + getCracksPerMilliSecond();
     }
 }
